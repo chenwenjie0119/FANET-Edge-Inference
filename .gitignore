@@ -1,0 +1,26 @@
+# Go
+*.exe
+*.test
+*.out
+/vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 构建产物
+build/
+bin/
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# IDE
+.idea/
+.vscode/
