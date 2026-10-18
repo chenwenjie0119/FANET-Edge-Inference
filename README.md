@@ -1,97 +1,101 @@
+**中文版本：[README.zh-CN.md](README.zh-CN.md) | English**
+
 # FANET-Edge-Inference
 
-无人机空中自组网（FANET）与异构分布式大模型边缘推理实验框架。
+> Author: Chen Wenjie · GitHub: [chenwenjie0119](https://github.com/chenwenjie0119)
 
-把多台无人机 + 机载计算节点（树莓派 / 安卓盒子）组成本地自组网集群，在网内完成：遥测采集、视频回传、分布式推理。本文档给出具体的协议选型、SDK、工程实践与分阶段验证路线，全部基于可落地验证的开源组件。
+An experimental framework for unmanned aerial vehicle ad-hoc networks (FANET) and heterogeneous distributed edge inference for large models.
 
-> 注意：大疆 Mini 5 Pro 的飞控是封闭系统，不开放 MAVLink 串口/UDP 数据面。它只能作为编队视觉/载荷平台，不能参与本项目机载数据链路。机载链路请选用 PX4 / ArduPilot 开放飞控（Holybro Pixhawk 系列等）。详见 `docs/02-flight-control-sdk.md`。
+The goal is to build a local self-organizing cluster from multiple UAVs plus onboard compute nodes (Raspberry Pi / Android boxes), covering telemetry collection, video streaming, and distributed inference within the network. This document provides concrete protocol selection, SDKs, engineering practices, and a staged verification roadmap, all based on verifiable open-source components.
 
-## 目录结构
+> Note: The DJI Mini 5 Pro flight controller is a closed system and does not expose the MAVLink serial/UDP data plane. It can only serve as a formation vision/payload platform and cannot join the onboard data link of this project. For the onboard link, use open flight controllers such as PX4 / ArduPilot (Holybro Pixhawk series, etc.). See `docs/02-flight-control-sdk.md`.
+
+## Repository Structure
 
 ```
 FANET-Edge-Inference/
-├── README.md                     # 项目总览与快速开始
+├── README.md                     # Project overview and quick start
 ├── LICENSE                       # MIT
 ├── .gitignore
 ├── docs/
-│   ├── 01-physical-comm.md       # 物理层与通信协议选型
-│   ├── 02-flight-control-sdk.md  # 飞控交互与数据获取
-│   ├── 03-distributed-compute.md # 异构分布式计算与通信
-│   ├── 04-simulation.md          # 开发环境与本地仿真
-│   ├── 05-references.md          # 开源项目与参考书目
-│   └── 06-roadmap.md             # 分阶段验证路线图
+│   ├── 01-physical-comm.md       # Physical layer and communication protocol selection
+│   ├── 02-flight-control-sdk.md  # Flight controller interaction and data acquisition
+│   ├── 03-distributed-compute.md # Heterogeneous distributed computing and communication
+│   ├── 04-simulation.md          # Development environment and local simulation
+│   ├── 05-references.md          # Open-source projects and references
+│   └── 06-roadmap.md             # Staged verification roadmap
 ├── examples/
-│   ├── heartbeat/                # 最小节点发现/心跳（Go，零第三方依赖）
-│   └── telemetry/                # MAVLink 遥测读取（pymavlink）
-└── stage0/                       # 阶段0：本地最小闭环（三语言联调）
-    ├── README.md                 # 环境准备 + 联调步骤
-    ├── scripts/sitl-up.sh        # 拉起 SITL + mavlink-router
-    ├── python/worker.py          # pymavlink 采集 -> JSON -> POST Master
-    ├── go/                       # Go Master HTTP 服务（:8080，节点表 + 离线判定）
-    └── c/udp_gateway.c           # C 原生 UDP 转发网关（可选，替代 mavlink-router）
+│   ├── heartbeat/                # Minimal node discovery/heartbeat (Go, zero third-party deps)
+│   └── telemetry/                # MAVLink telemetry reader (pymavlink)
+└── stage0/                       # Stage 0: minimal local closed loop (three-language integration)
+    ├── README.md                 # Environment setup + integration steps
+    ├── scripts/sitl-up.sh        # Launch SITL + mavlink-router
+    ├── python/worker.py          # pymavlink collection -> JSON -> POST Master
+    ├── go/                       # Go Master HTTP service (:8080, node table + offline detection)
+    └── c/udp_gateway.c           # Native C UDP forwarding gateway (optional, replaces mavlink-router)
 
-stage1/                          # 阶段1：单台真机 + 外挂树莓派
-    ├── README.md                 # 落地指南：串口准备 + 联调 + 弱网测试
-    ├── scripts/setup-serial.sh   # 释放 /dev/ttyAMA0（禁蓝牙 + 关控制台）
-    ├── scripts/serial-test.sh    # stty 57600 + 回环测试
-    ├── c/mavlink_serial_gateway.c# 串口<->UDP 双向网关（termios + 断线重连 + 指数退避）
-    ├── go/                       # 真机适配版 Master（动态超时 + 退避 + ANSI 彩色日志）
-    └── netem/asymmetric-test.sh  # 上下行不对称弱网模拟（ifb + iptables）
+stage1/                          # Stage 1: single real vehicle + external Raspberry Pi
+    ├── README.md                 # Deployment guide: serial setup + integration + weak-network tests
+    ├── scripts/setup-serial.sh   # Release /dev/ttyAMA0 (disable Bluetooth + console)
+    ├── scripts/serial-test.sh    # stty 57600 + loopback test
+    ├── c/mavlink_serial_gateway.c# Bidirectional serial<->UDP gateway (termios + reconnect + exponential backoff)
+    ├── go/                       # Real-vehicle Master (dynamic timeout + backoff + ANSI colored logs)
+    └── netem/asymmetric-test.sh  # Asymmetric weak-network simulation (ifb + iptables)
 ```
 
-## 技术栈总览
+## Technology Stack
 
-| 层 | 选型 |
+| Layer | Choice |
 |---|---|
-| 机间短距链路 | Wi-Fi Mesh：batman-adv（规模化）/ 802.11s（原型） |
-| 机间长距控制 | LoRa（SX1276/SX1262 模块，带外控制信道） |
-| 回传链路 | 4G Cat4（Quectel EC20 / SIM7600，ModemManager 拨号） |
-| 飞控数据 | MAVLink over UART（TELEM 口）→ mavlink-router → UDP |
-| 飞控 SDK | MAVSDK-Python / pymavlink；ROS2 用 px4_ros_com |
-| 节点发现/心跳 | Go：hashicorp/memberlist（生产）/ UDP 组播（最小示例） |
-| 视频/张量传输 | Pion WebRTC（跨网段）/ GStreamer RTSP / mesh 内 UDP multicast |
-| 边缘推理 | llama.cpp（单节点）+ exo（异构集群）/ k3s 编排 |
-| 仿真 | PX4 SITL + Gazebo；网络用 tc/netem、NS-3 |
+| Short-range inter-UAV link | Wi-Fi Mesh: batman-adv (scale) / 802.11s (prototype) |
+| Long-range control | LoRa (SX1276/SX1262 modules, out-of-band control channel) |
+| Backhaul link | 4G Cat4 (Quectel EC20 / SIM7600, ModemManager dial-up) |
+| Flight controller data | MAVLink over UART (TELEM port) → mavlink-router → UDP |
+| Flight controller SDK | MAVSDK-Python / pymavlink; px4_ros_com for ROS2 |
+| Node discovery/heartbeat | Go: hashicorp/memberlist (production) / UDP multicast (minimal example) |
+| Video/tensor transport | Pion WebRTC (cross-subnet) / GStreamer RTSP / in-mesh UDP multicast |
+| Edge inference | llama.cpp (single node) + exo (heterogeneous cluster) / k3s orchestration |
+| Simulation | PX4 SITL + Gazebo; tc/netem, NS-3 for networking |
 
-## 快速开始（纯本地仿真）
+## Quick Start (Local Simulation Only)
 
-前置：Ubuntu 22.04/24.04 或 WSL2，装好 PX4 工具链。
+Prerequisites: Ubuntu 22.04/24.04 or WSL2 with the PX4 toolchain installed.
 
 ```bash
-# 1. PX4 SITL 多机仿真（2 机）
+# 1. PX4 SITL multi-vehicle simulation (2 vehicles)
 git clone --recursive https://github.com/PX4/PX4-Autopilot
 cd PX4-Autopilot
-make px4_sitl gazebo-classic        # 单机
-bash Tools/sitl_multiple_run.sh 2   # 双机
+make px4_sitl gazebo-classic        # single vehicle
+bash Tools/sitl_multiple_run.sh 2   # two vehicles
 
-# 2. mavlink-router 把多路 UDP 遥测汇总到 14550
+# 2. mavlink-router aggregates multi-route UDP telemetry to 14550
 mavlink-routerd -e 127.0.0.1:14550 127.0.0.1:14540 127.0.0.1:14541
 
-# 3. 拉遥测（另开终端）
+# 3. Pull telemetry (another terminal)
 pip install pymavlink
 python3 examples/telemetry/telemetry.py --endpoint udp:127.0.0.1:14550
 
-# 4. 启动节点发现/心跳（双节点演示，另开两个终端）
+# 4. Start node discovery/heartbeat (two-node demo, two more terminals)
 cd examples/heartbeat
 NODE_ID=uav-1 go run .
 NODE_ID=uav-2 go run .
 ```
 
-详见 `docs/04-simulation.md` 与 `docs/06-roadmap.md`。
+See `docs/04-simulation.md` and `docs/06-roadmap.md`.
 
-## 文档导航
+## Documentation Index
 
-- 通信选型：`docs/01-physical-comm.md`
-- 飞控 SDK：`docs/02-flight-control-sdk.md`
-- 分布式计算：`docs/03-distributed-compute.md`
-- 仿真环境：`docs/04-simulation.md`
-- 参考资料：`docs/05-references.md`
-- 路线图：`docs/06-roadmap.md`
+- Communication selection: `docs/01-physical-comm.md`
+- Flight controller SDK: `docs/02-flight-control-sdk.md`
+- Distributed computing: `docs/03-distributed-compute.md`
+- Simulation: `docs/04-simulation.md`
+- References: `docs/05-references.md`
+- Roadmap: `docs/06-roadmap.md`
 
 ## License
 
 MIT
 
-## 免责声明
+## Disclaimer
 
-本项目为个人学习与研究用途的开源实验项目，作者不对使用本项目产生的任何后果承担责任。无人机飞行需遵守当地法律法规，请勿在禁飞区域或未经许可的情况下进行飞行作业；项目中涉及的第三方开源组件与商标归其各自所有者所有。
+This project is an open-source experiment for personal learning and research purposes. The author assumes no responsibility for any consequences arising from its use. UAV flight must comply with local laws and regulations; do not fly in no-fly zones or without proper authorization. Third-party open-source components and trademarks mentioned in this project belong to their respective owners.
