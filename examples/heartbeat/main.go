@@ -73,9 +73,9 @@ func main() {
 		if err := json.Unmarshal(buf[:n], &a); err != nil {
 			continue
 		}
-		peers[a.ID] = time.Now()
-
 		now := time.Now()
+		peers[a.ID] = now
+
 		var alive []string
 		for pid, last := range peers {
 			if now.Sub(last) <= timeout {

@@ -1,16 +1,17 @@
 // master.go — Stage 1 真机适配版地面站 Master（Go，零第三方依赖）。
 //
 // HTTP 接口（与 Stage 0 完全兼容，worker.py 零改动）：
-//   POST /api/v1/heartbeat   接收 Worker 心跳 JSON
-//   GET  /api/v1/nodes       查询节点表（含 miss_count / backoff_secs）
-//   GET  /metrics            Prometheus 文本格式指标（在线数/丢包计数等，Grafana 可直接抓）
+//
+//	POST /api/v1/heartbeat   接收 Worker 心跳 JSON
+//	GET  /api/v1/nodes       查询节点表（含 miss_count / backoff_secs）
+//	GET  /metrics            Prometheus 文本格式指标（在线数/丢包计数等，Grafana 可直接抓）
 //
 // 真机适配（相对 Stage 0 的三个变化）：
-//   1. 动态心跳超时：心跳周期 1s，连续丢满 maxMiss=3 次（第 4 秒）判离线，
-//      4G/Wi-Fi 抖动不会把节点误判下线。
-//   2. 指数退避：离线节点进入退避探测，1s -> 2s -> 4s -> ... -> 60s，
-//      到达探测时刻才打印一条状态，避免每一秒疯狂刷屏。
-//   3. ANSI 彩色终端日志：绿=上线，红=离线，黄=退避探测（--no-color 关闭）。
+//  1. 动态心跳超时：心跳周期 1s，连续丢满 maxMiss=3 次（第 4 秒）判离线，
+//     4G/Wi-Fi 抖动不会把节点误判下线。
+//  2. 指数退避：离线节点进入退避探测，1s -> 2s -> 4s -> ... -> 60s，
+//     到达探测时刻才打印一条状态，避免每一秒疯狂刷屏。
+//  3. ANSI 彩色终端日志：绿=上线，红=离线，黄=退避探测（--no-color 关闭）。
 //
 // 运行：go build -o master . && ./master
 package main
@@ -28,10 +29,10 @@ import (
 
 const (
 	addr           = ":8080"
-	heartbeatEvery = time.Second        // worker 上报周期
-	maxMiss        = 3                  // 连续丢满该次数即判离线
-	backoffBase    = 1 * time.Second    // 指数退避初始值
-	backoffMax     = 60 * time.Second   // 退避上限
+	heartbeatEvery = time.Second      // worker 上报周期
+	maxMiss        = 3                // 连续丢满该次数即判离线
+	backoffBase    = 1 * time.Second  // 指数退避初始值
+	backoffMax     = 60 * time.Second // 退避上限
 )
 
 /* ANSI 颜色（NO_COLOR 或 --no-color 时禁用） */
@@ -185,9 +186,13 @@ func heartbeatHandler(r *Registry) http.HandlerFunc {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
+		if hb.NodeID == "" {
+			http.Error(w, "node_id required", http.StatusBadRequest)
+			return
+		}
 		r.upsert(hb)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok"}`)
+		fmt.Fprint(w, `{"status":"ok"}`)
 	}
 }
 

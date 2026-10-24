@@ -37,7 +37,9 @@ int main(void) {
 
     /* 允许端口快速复用，避免重启时 TIME_WAIT 阻塞 bind */
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+    }
 
     /* 2. bind：绑定任意本地地址 + SRC_PORT */
     memset(&src_addr, 0, sizeof(src_addr));
@@ -51,10 +53,14 @@ int main(void) {
         return 1;
     }
 
-    /* 转发目标地址 */
+    /* 转发目标地址（用 inet_pton 替换已废弃的 inet_addr，并校验转换结果） */
     memset(&dst_addr, 0, sizeof(dst_addr));
     dst_addr.sin_family = AF_INET;
-    dst_addr.sin_addr.s_addr = inet_addr(DST_IP);
+    if (inet_pton(AF_INET, DST_IP, &dst_addr.sin_addr) != 1) {
+        perror("inet_pton");
+        close(fd);
+        return 1;
+    }
     dst_addr.sin_port = htons(DST_PORT);
 
     printf("udp gateway: %d -> %s:%d\n", SRC_PORT, DST_IP, DST_PORT);
@@ -73,6 +79,6 @@ int main(void) {
         }
     }
 
-    close(fd);
+    /* 常驻进程：无退出路径，收到信号时由内核回收 socket */
     return 0;
 }

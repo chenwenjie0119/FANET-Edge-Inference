@@ -18,7 +18,18 @@ from pymavlink import mavutil
 
 RED = "\033[91m"
 RESET = "\033[0m"
-BATTERY_WARN = int(os.environ.get("BATTERY_WARN", "20"))
+
+
+def _env_int(name: str, default: int) -> int:
+    """读取环境变量为整数，非法值时回退默认值（不打断启动）。"""
+    try:
+        return int(os.environ.get(name, str(default)))
+    except ValueError:
+        print(f"invalid {name} env, using default {default}", flush=True)
+        return default
+
+
+BATTERY_WARN = _env_int("BATTERY_WARN", 20)
 
 
 def log_red(msg: str) -> None:
@@ -109,9 +120,10 @@ def main() -> None:
         elif t == "SYS_STATUS":
             sys = msg
 
-        if time.time() - last < args.interval:
+        now = time.time()
+        if now - last < args.interval:
             continue
-        last = time.time()
+        last = now
 
         payload = build_payload(args.node_id, att, pos, sys)
         print(json.dumps(payload, ensure_ascii=False), flush=True)

@@ -127,7 +127,9 @@ static int udp_server_init(int port)
         return -1;
     }
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -172,7 +174,7 @@ static int run_udp_mode(void)
             perror("sendto");
         }
     }
-    close(fd);
+    /* 常驻进程：无退出路径，结束时由内核回收 socket */
     return 0;
 }
 

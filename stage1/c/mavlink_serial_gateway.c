@@ -38,6 +38,7 @@
 #define BUF_SIZE        4096
 #define RECONNECT_MIN   1       /* 重连最小间隔（秒） */
 #define RECONNECT_MAX   30      /* 重连最大间隔（秒） */
+#define WRITE_MAX_TRIES 1000    /* 串口写重试上限（每次 1ms，约 1s） */
 
 /* ---------- 串口 ---------- */
 
@@ -87,9 +88,6 @@ static int serial_open(const char *path)
     return fd;
 }
 
-/* 串口写重试上限：每次 EAGAIN 等待 1ms，最多约 1s，防止飞控不读串口时无限转圈 */
-#define WRITE_MAX_TRIES 1000
-
 /* 写满 len 字节；串口缓冲满时短暂重试（EAGAIN），超时/失败返回 -1。 */
 static int serial_write_all(int fd, const char *buf, size_t len)
 {
@@ -126,7 +124,9 @@ static int udp_server_init(int port)
         return -1;
     }
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt");
+    }
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));

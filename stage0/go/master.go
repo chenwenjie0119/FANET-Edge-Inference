@@ -63,7 +63,7 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry {
-	return &Registry{nodes: map[string]*Node{}}
+	return &Registry{nodes: make(map[string]*Node)}
 }
 
 // upsert 记录一次心跳，节点立即置为 online。
@@ -103,6 +103,13 @@ func (r *Registry) snapshot() []Node {
 	return out
 }
 
+// count 返回已注册节点数（轻量查询，避免为取数量做全量快照拷贝）。
+func (r *Registry) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.nodes)
+}
+
 func main() {
 	reg := NewRegistry()
 
@@ -122,10 +129,10 @@ func main() {
 		}
 		reg.upsert(hb)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status": "ok",
 			"node":   hb.NodeID,
-			"nodes":  len(reg.snapshot()),
+			"nodes":  reg.count(),
 		})
 	})
 

@@ -21,9 +21,8 @@ def main():
     print(f"connected: sys={conn.target_system} comp={conn.target_component}")
 
     while True:
+        # blocking=True 时 recv_match 不会返回 None，无需判空分支
         msg = conn.recv_match(type=["ATTITUDE", "GLOBAL_POSITION_INT", "SYS_STATUS"], blocking=True)
-        if msg is None:
-            continue
         t = msg.get_type()
         if t == "ATTITUDE":
             print(f"attitude roll={msg.roll:.3f} pitch={msg.pitch:.3f} yaw={msg.yaw:.3f}")
