@@ -5,13 +5,29 @@
 # 用法: sudo bash setup-serial.sh    （执行后需重启）
 set -euo pipefail
 
+# 依赖检查：缺命令时提前报错，而不是在 sed/tee 处报 command not found
+for cmd in sudo raspi-config sed grep tee; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: required command not found: $cmd" >&2
+        exit 1
+    fi
+done
+
 # 兼容不同系统的 /boot 挂载点（Bookworm 起为 /boot/firmware）
-BOOT_DIR=/boot
+BOOT_DIR="/boot"
 if [ -f /boot/firmware/config.txt ]; then
-    BOOT_DIR=/boot/firmware
+    BOOT_DIR="/boot/firmware"
 fi
 CONFIG="$BOOT_DIR/config.txt"
 CMDLINE="$BOOT_DIR/cmdline.txt"
+
+# 两个文件是后续 sed 的输入，缺失时直接失败并给出明确提示
+for f in "$CONFIG" "$CMDLINE"; do
+    if [ ! -f "$f" ]; then
+        echo "ERROR: file not found: $f" >&2
+        exit 1
+    fi
+done
 
 echo "==> [1/4] disable serial console login, enable serial hardware"
 # raspi-config nonint do_serial 1 = 硬件串口启用 + 关闭串口控制台（login shell）

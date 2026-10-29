@@ -12,13 +12,31 @@
 #   bash asymmetric-test.sh stop  [网卡名]
 set -euo pipefail
 
-IFACE="${2:-eth0}"
 ACTION="${1:-start}"
+IFACE="${2:-eth0}"
+
+# 忽略失败执行：清理类动作（规则本就不存在时）不应中断脚本
+quiet() { "$@" 2>/dev/null || true; }
+
+# 依赖检查：tc/ip/iptables/modprobe 缺任意一个都无法完成配置
+for cmd in sudo tc ip iptables modprobe grep; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: required command not found: $cmd" >&2
+        exit 1
+    fi
+done
 
 start_rules() {
+    # 网卡不存在时 tc 的报错不够直观，这里先给出明确提示
+    if ! ip link show "$IFACE" >/dev/null 2>&1; then
+        echo "ERROR: network interface not found: $IFACE" >&2
+        return 1
+    fi
+
     echo "==> [UP]    $IFACE egress: +200ms delay on udp/14550 only"
-    # 防重复添加：先清掉旧 root
-    sudo tc qdisc del dev "$IFACE" root 2>/dev/null || true
+    # 防重复添加：先清掉旧 root 与旧 ingress（重复执行 start 不会报错）
+    quiet sudo tc qdisc del dev "$IFACE" root
+    quiet sudo tc qdisc del dev "$IFACE" handle ffff: ingress
     # prio 默认流量全部进 1:2（直通无延迟），u32 只把 udp/14550 分流到 1:1 的 netem
     sudo tc qdisc add dev "$IFACE" root handle 1: prio bands 3 priomap 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2
     sudo tc qdisc add dev "$IFACE" parent 1:1 handle 10: netem delay 200ms
@@ -53,21 +71,24 @@ start_rules() {
 stop_rules() {
     echo "==> cleanup"
     # 先删子 qdisc 再删 root，顺序无关紧要（root 会级联清理）
-    sudo tc qdisc del dev "$IFACE" parent 1:1 2>/dev/null || true
-    sudo tc qdisc del dev "$IFACE" root 2>/dev/null || true
-    sudo tc qdisc del dev "$IFACE" handle ffff: ingress 2>/dev/null || true
-    sudo tc qdisc del dev ifb0 root 2>/dev/null || true
-    sudo ip link set ifb0 down 2>/dev/null || true
+    quiet sudo tc qdisc del dev "$IFACE" parent 1:1
+    quiet sudo tc qdisc del dev "$IFACE" root
+    quiet sudo tc qdisc del dev "$IFACE" handle ffff: ingress
+    quiet sudo tc qdisc del dev ifb0 root
+    quiet sudo ip link set ifb0 down
     # iptables：先按完整规则删，再按 comment 兜底清残留（防止重启后顺序漂移删错）
-    sudo iptables -D INPUT -p udp --dport 14550 \
+    quiet sudo iptables -D INPUT -p udp --dport 14550 \
         -m statistic --mode random --probability 0.2 \
-        -m comment --comment "fanet-netem" -j DROP 2>/dev/null || true
-    sudo iptables -D INPUT -m comment --comment "fanet-netem" -j DROP 2>/dev/null || true
+        -m comment --comment "fanet-netem" -j DROP
+    quiet sudo iptables -D INPUT -m comment --comment "fanet-netem" -j DROP
     echo "OK: 已清理"
 }
 
 case "$ACTION" in
     start) start_rules ;;
     stop)  stop_rules ;;
-    *)     echo "用法: $0 {start|stop} [网卡名]"; exit 1 ;;
+    *)
+        echo "用法: $0 {start|stop} [网卡名]" >&2
+        exit 1
+        ;;
 esac

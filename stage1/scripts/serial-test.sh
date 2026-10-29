@@ -9,17 +9,30 @@ set -euo pipefail
 DEV="${1:-/dev/ttyAMA0}"
 BAUD="${2:-57600}"
 
+# 依赖检查：缺命令时提前报错，避免 stty/timeout 不可用导致误判 FAIL
+for cmd in stty timeout head grep; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "ERROR: required command not found: $cmd" >&2
+        exit 1
+    fi
+done
+
+if [ ! -e "$DEV" ]; then
+    echo "ERROR: serial device not found: $DEV" >&2
+    exit 1
+fi
+
 echo "==> configure $DEV @ ${BAUD} 8N1 (raw, no echo)"
 stty -F "$DEV" "${BAUD}" cs8 -cstopb -parenb -icanon -echo -echoe -echok min 0 time 5
 
 marker="FANET-LOOPBACK-$$"
-echo "$marker" > "$DEV"
+printf '%s\n' "$marker" > "$DEV"
 
 recv="$(timeout 2 head -c 64 "$DEV" || true)"
-if echo "$recv" | grep -q "$marker"; then
+if printf '%s' "$recv" | grep -q "$marker"; then
     echo "PASS: loopback OK ($DEV @ $BAUD)"
 else
-    echo "FAIL: no echo on $DEV"
-    echo "检查: 杜邦线是否短接 GPIO14<->GPIO15，或 stty 是否报错"
+    echo "FAIL: no echo on $DEV" >&2
+    echo "检查: 杜邦线是否短接 GPIO14<->GPIO15，或 stty 是否报错" >&2
     exit 1
 fi
