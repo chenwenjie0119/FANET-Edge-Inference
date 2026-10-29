@@ -87,3 +87,75 @@
 - LoRa 模块（E32-900T 或 433M 版本）×2（阶段 3 可选）
 - 4G HAT（EC20/SIM7600）×2（阶段 1 起）
 - 开放飞控板（PX4 兼容，如 Holybro Pixhawk 系列）
+
+## 下一步行动计划（Stage 2 起步）
+
+下面按周拆解，每步都在双树莓派上可独立验证，不依赖真机试飞。
+
+### 第 1 周：地面双节点链路打通
+
+1. 硬件准备：树莓派 4B/5 ×2，配同型号 USB 网卡（RTL8812AU），避免驱动版本不一致导致 mesh 建链失败。
+2. 驱动编译（Raspberry Pi OS Lite Bookworm）：
+
+```bash
+sudo apt install -y raspberrypi-kernel-headers bc dkms git
+git clone https://github.com/aircrack-ng/rtl8812au.git
+cd rtl8812au && sudo make dkms_install
+iw list | grep -A8 "Supported interface modes"   # 需出现 mesh point
+```
+
+3. 802.11s 最小原型（先验连通，不求规模）：
+
+```bash
+sudo iw dev wlan1 interface add mesh0 type mp
+sudo iw dev mesh0 mesh join fanet-mesh freq 5180
+sudo ip link set mesh0 up
+sudo ip addr add 10.10.0.1/24 dev mesh0        # 对端用 10.10.0.2
+```
+
+4. batman-adv 多跳路线（Stage 2 主用）：
+
+```bash
+sudo modprobe batman_adv
+sudo batctl if add wlan1
+sudo ip link set bat0 up
+sudo batctl n && sudo batctl o
+```
+
+5. 验收：`ping -c 100 10.10.0.2` 丢包 0，`batctl o` 能看到对端 originator，`iw dev mesh0 station dump` 信号强度稳定。
+
+### 第 2 周：节点发现与心跳改造
+
+- 用 memberlist（hashicorp）替换 `examples/heartbeat` 里的 UDP 组播示例，端口 7946 TCP/UDP，绑定 bat0 地址。
+- 心跳周期 500ms，节点超时判定 3 次未响应即剔除。
+- 验收：拔掉对端电源后 3 秒内成员表移除该节点；重上电 2 秒内重新加入，master 侧无进程退出现象。
+
+### 第 3 周：视频链路
+
+```bash
+# 发送端（采集端）
+gst-launch-1.0 v4l2src device=/dev/video0 ! video/x-raw,width=1280,height=720,framerate=30/1 \
+  ! x264enc tune=zerolatency bitrate=2000 ! rtph264pay ! udpsink host=10.10.0.2 port=5600
+# 接收端（推理端）
+gst-launch-1.0 udpsrc port=5600 ! application/x-rtp,encoding-name=H264 \
+  ! rtph264depay ! avdec_h264 ! autovideosink
+```
+
+验收：1280×720@25fps 连续播放 20 分钟不中断，端到端延迟 <300ms（用秒表打点法实测）。
+
+### 第 4 周：弱网压测与数据留档
+
+```bash
+cd stage1/netem && sudo ./asymmetric-test.sh start mesh0 30 5   # 30% 丢包 / 5ms 抖动
+# 复现视频卡顿与心跳误判后，记录恢复参数，再执行 stop
+sudo ./asymmetric-test.sh stop mesh0
+```
+
+- 记录矩阵：丢包率 × 带宽限制下的视频帧率、心跳感知延迟、节点误剔除次数，写入 `docs/` 下的实测表格。
+- 这批数据是 Issue #1 里"真机未验证"的直接证据，也是后续论文/毕设的核心素材。
+
+### Stage 3 前置（可与上面并行）
+
+- 单节点 k3s：`curl -sfL https://get.k3s.io | sh -`，确认 ARM64 容器可调度。
+- llama.cpp 在树莓派上编译跑通 Q4 量化小模型，记录 tokens/s 基线，作为分层推理的对照数据。
+- exo 双节点分组：先在两台机器手工跑通分组与 tensor 切分，再迁到 k8s。
